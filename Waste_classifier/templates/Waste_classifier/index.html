@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waste Management Classification</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+  body {
+    font-family: 'Roboto', sans-serif;
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    margin: 0; padding: 0;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh;
+  }
+
+  .container {
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    width: 480px;
+    padding: 30px;
+    text-align: center;
+  }
+
+  h1 {
+    color: #333;
+    margin-bottom: 20px;
+  }
+
+  video, img {
+    border-radius: 12px;
+    width: 100%;
+    max-width: 400px;
+    height: auto;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  }
+
+  #canvas {
+    display: none;
+  }
+
+  .btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 12px 28px;
+    margin: 15px 10px 0 10px;
+    border-radius: 50px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+
+  .btn:hover {
+    background: #0056b3;
+  }
+
+  #result {
+    margin-top: 20px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #28a745;
+    min-height: 40px;
+  }
+
+  input[type="file"] {
+    margin-top: 20px;
+  }
+
+  .spinner {
+    margin: 20px auto 0;
+    border: 5px solid #f3f3f3;
+    border-top: 5px solid #007bff;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    animation: spin 1s linear infinite;
+    display: none;
+  }
+
+  .spinner.active {
+    display: block;
+  }
+
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Waste Management Classification</h1>
+
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas" width="224" height="224"></canvas>
+
+  <div>
+    <button class="btn" id="startBtn">Start Real-Time Classification</button>
+    <button class="btn" id="stopBtn" disabled>Stop</button>
+  </div>
+
+  <div id="result">Upload an image or start webcam classification</div>
+  <div class="spinner" id="spinner"></div>
+
+  <hr style="margin: 30px 0;">
+
+  <form id="uploadForm" enctype="multipart/form-data">
+    <label for="imageUpload"><strong>Upload Local Photo for Classification:</strong></label><br>
+    <input type="file" id="imageUpload" name="image" accept="image/*" required />
+    <br>
+    <button type="submit" class="btn">Classify Uploaded Image</button>
+  </form>
+
+  <img id="uploadedImagePreview" alt="" style="margin-top: 20px; max-width: 100%; border-radius: 12px; display:none;" />
+</div>
+
+<script>
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const resultDiv = document.getElementById('result');
+  const spinner = document.getElementById('spinner');
+  const uploadForm = document.getElementById('uploadForm');
+  const imageUpload = document.getElementById('imageUpload');
+  const uploadedImagePreview = document.getElementById('uploadedImagePreview');
+
+  let stream = null;
+  let classifyInterval = null;
+
+  async function startWebcam() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      await video.play();
+    } catch (err) {
+      alert('Error accessing webcam: ' + err.message);
+    }
+  }
+
+  function stopWebcam() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+  }
+
+  async function classifyFrame() {
+    spinner.classList.add('active');
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg');
+
+    try {
+      const response = await fetch('/classifier/classify/webcam/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ image: dataUrl })
+      });
+      const data = await response.json();
+      if (data.error) {
+        resultDiv.textContent = 'Error: ' + data.error;
+        resultDiv.style.color = '#dc3545'; // red
+      } else {
+        resultDiv.textContent = `Prediction: ${data.class} (Confidence: ${(data.confidence * 100).toFixed(2)}%)`;
+        resultDiv.style.color = '#28a745'; // green
+      }
+    } catch (err) {
+      resultDiv.textContent = 'Error: ' + err.message;
+      resultDiv.style.color = '#dc3545';
+    } finally {
+      spinner.classList.remove('active');
+    }
+  }
+
+  startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    resultDiv.textContent = 'Starting webcam and classification...';
+    resultDiv.style.color = '#333';
+    await startWebcam();
+    classifyInterval = setInterval(classifyFrame, 1500); // classify every 1.5 seconds
+  });
+
+  stopBtn.addEventListener('click', () => {
+    stopBtn.disabled = true;
+    startBtn.disabled = false;
+    clearInterval(classifyInterval);
+    stopWebcam();
+    resultDiv.textContent = 'Real-time classification stopped.';
+    resultDiv.style.color = '#333';
+  });
+
+  uploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!imageUpload.files.length) return;
+
+    const file = imageUpload.files[0];
+    uploadedImagePreview.src = URL.createObjectURL(file);
+    uploadedImagePreview.style.display = 'block';
+    resultDiv.textContent = 'Classifying uploaded image...';
+    resultDiv.style.color = '#333';
+    spinner.classList.add('active');
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const response = await fetch('/classifier/classify/upload/', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await response.json();
+      if (data.error) {
+        resultDiv.textContent = 'Error: ' + data.error;
+        resultDiv.style.color = '#dc3545';
+      } else {
+        resultDiv.textContent = `Prediction: ${data.class} (Confidence: ${(data.confidence * 100).toFixed(2)}%)`;
+        resultDiv.style.color = '#28a745';
+      }
+    } catch (err) {
+      resultDiv.textContent = 'Error: ' + err.message;
+      resultDiv.style.color = '#dc3545';
+    } finally {
+      spinner.classList.remove('active');
+    }
+  });
+</script>
+
+</body>
+</html>
